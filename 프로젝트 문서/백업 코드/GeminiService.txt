@@ -1,0 +1,117 @@
+package com.springboot.bicycle_app.service;
+
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Gemini API 호출 서비스.
+ *
+ * 역할:
+ *  - 사용자의 질문(prompt)을 Gemini API로 전송
+ *  - Gemini가 생성한 텍스트 응답을 파싱하여 문자열로 반환
+ *
+ * 설정값:
+ *  - gemini.api-key : Google API Key
+ *  - gemini.url     : Gemini 모델 엔드포인트 URL
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class GeminiService {
+
+    @Value("${gemini.api-key}")
+    private String apiKey;
+
+    @Value("${gemini.url}")
+    private String geminiUrl;
+
+    // Spring RestTemplate을 사용한 HTTP 요청 수행
+    private final RestTemplate restTemplate = new RestTemplate();
+
+
+    /**
+     * 사용자 입력(prompt)을 Gemini API로 전달하고,
+     * 생성된 텍스트 응답을 반환한다.
+     *
+     * 요청 형식(JSON):
+     *  {
+     *    "contents": [
+     *      {
+     *        "parts": [
+     *          { "text": "<사용자 메시지>" }
+     *        ]
+     *      }
+     *    ]
+     *  }
+     *
+     * 응답 형식(JSON 예시):
+     *  {
+     *    "candidates": [
+     *      {
+     *        "content": {
+     *          "parts": [
+     *            { "text": "AI 응답 내용" }
+     *          ]
+     *        }
+     *      }
+     *    ]
+     *  }
+     *
+     * 반환:
+     *   Gemini가 생성한 텍스트 문자열
+     */
+    public String askGemini(String prompt) {
+        try {
+            Map<String, Object> request = Map.of(
+                "contents",
+                List.of(Map.of(
+                    "role", "user",
+                    "parts", List.of(Map.of("text", prompt))
+                ))
+            );
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+
+            String url = UriComponentsBuilder.fromHttpUrl(geminiUrl)
+                    .queryParam("key", apiKey)
+                    .toUriString();
+
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(request, headers);
+
+            ResponseEntity<Map> response =
+                    restTemplate.postForEntity(url, entity, Map.class);
+
+            Map body = response.getBody();
+            if (body == null) {
+                log.error("Gemini response body is null. status={}", response.getStatusCode());
+                return "AI 응답이 비어 있습니다.";
+            }
+
+            Map candidate = (Map) ((List) body.get("candidates")).get(0);
+            Map content = (Map) candidate.get("content");
+            Map part = (Map) ((List) content.get("parts")).get(0);
+
+            return String.valueOf(part.get("text"));
+
+        } catch (HttpStatusCodeException e) {
+            log.error("Gemini HTTP Error. status={}, body={}",
+                    e.getStatusCode(), e.getResponseBodyAsString(), e);
+            return "AI 응답을 가져오는 중 오류가 발생했습니다. (Gemini HTTP Error)";
+        } catch (Exception e) {
+            log.error("Gemini Unknown Error", e);
+            return "AI 응답을 가져오는 중 오류가 발생했습니다.";
+        }
+    }
+}
